@@ -5,7 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg build-es
 WORKDIR /app
 COPY . .
 
-RUN pip install --no-cache-dir -r Requirments.txt -r requirements-api.txt
+RUN pip install --no-cache-dir -r requirments.txt -r requirements-api.txt
 
 ENV PYTHONUNBUFFERED=1
 
