@@ -1,0 +1,28 @@
+# Environment variables
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Audio / Video downloads & chunks
+downloads/
+downloades/
+*.wav
+*.mp4
+*.m4a
+*.webm
+
+# Vector DB
+vector_db/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE files
+.vscode/
+.idea/

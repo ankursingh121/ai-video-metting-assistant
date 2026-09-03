@@ -28,12 +28,15 @@ from core.rag_engine import build_rag_chain, ask_question  # noqa: E402
 
 
 app = FastAPI(title="AI Video Meeting Assistant API", version="1.0.0")
+raw_origins = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
+allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")],
-    allow_credentials=False,
-    allow_methods=["POST", "GET"],
-    allow_headers=["content-type", "x-service-key"],
+    allow_origins=allowed_origins if allowed_origins else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 SERVICE_KEY = os.getenv("SERVICE_API_KEY")
