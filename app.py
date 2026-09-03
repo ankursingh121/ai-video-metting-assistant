@@ -1,5 +1,7 @@
 import streamlit as st
 import time
+import os
+import traceback
 from dotenv import load_dotenv
 from utils.audio_processor import process_input
 from core.transcriber import transcribe_all
@@ -335,8 +337,15 @@ with st.sidebar:
     st.markdown('<div class="hero-sub">Meeting Intelligence</div>', unsafe_allow_html=True)
     st.markdown("---")
 
-    st.markdown('<span class="badge badge-purple">Input</span>', unsafe_allow_html=True)
-    source = st.text_input("YouTube URL or File Path", placeholder="https://youtube.com/watch?v=... or /path/to/file.mp4")
+    st.markdown('<span class="badge badge-purple">Input Source</span>', unsafe_allow_html=True)
+    input_mode = st.radio("Source Type", ["YouTube URL", "Upload Audio/Video"], horizontal=True)
+    
+    source = ""
+    uploaded_file = None
+    if input_mode == "YouTube URL":
+        source = st.text_input("YouTube URL", placeholder="https://youtube.com/watch?v=...")
+    else:
+        uploaded_file = st.file_uploader("Choose file", type=["mp3", "wav", "mp4", "m4a", "webm", "mkv"])
 
     language = st.selectbox("Language", ["english", "hinglish"], index=0)
 
@@ -362,9 +371,24 @@ st.markdown("---")
 
 # ── Run Pipeline ────────────────────────────────────────────────────────────────
 if run_btn:
-    if not source.strip():
-        st.error("Please enter a YouTube URL or file path.")
+    source_to_process = None
+    if input_mode == "YouTube URL":
+        if not source or not source.strip():
+            st.error("⚠️ Please enter a valid YouTube URL.")
+        else:
+            source_to_process = source.strip()
     else:
+        if not uploaded_file:
+            st.error("⚠️ Please upload an audio or video file first.")
+        else:
+            upload_dir = "downloades"
+            os.makedirs(upload_dir, exist_ok=True)
+            saved_path = os.path.join(upload_dir, uploaded_file.name)
+            with open(saved_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            source_to_process = saved_path
+
+    if source_to_process:
         st.session_state.pipeline_done = False
         st.session_state.result = None
         st.session_state.chat_history = []
@@ -380,7 +404,7 @@ if run_btn:
                 st.info("⚙️ Pipeline running — see sidebar for live status…")
 
             update_step("audio", "active")
-            chunks = process_input(source)
+            chunks = process_input(source_to_process)
             update_step("audio", "done")
 
             update_step("transcript", "active")
@@ -424,7 +448,9 @@ if run_btn:
             for k in ["audio","transcript","title","summary","extract","rag"]:
                 if st.session_state.pipeline_steps.get(k) == "active":
                     st.session_state.pipeline_steps[k] = "pending"
-            progress_placeholder.error(f"❌ Error: {e}")
+            st.error(f"❌ Error during analysis: {e}")
+            with st.expander("Show detailed error trace"):
+                st.code(traceback.format_exc())
 
 # ── Results ──────────────────────────────────────────────────────────────────────
 if st.session_state.result:

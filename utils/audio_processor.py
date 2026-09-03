@@ -6,7 +6,7 @@ DOWNLOAD_DIR = 'downloades'
 os.makedirs(DOWNLOAD_DIR,exist_ok = True)
 
 def download_youtube_audio(url :str) ->str:
-    output_path = os.path.join(DOWNLOAD_DIR, "%(title)s.%(ext)s")
+    output_path = os.path.join(DOWNLOAD_DIR, "%(id)s.%(ext)s")
     ydl_opts = {
         "format": "bestaudio/best",
         "outtmpl": output_path,
@@ -17,12 +17,24 @@ def download_youtube_audio(url :str) ->str:
                 "preferredquality": "192",
             }
         ],
-        "quiet": True,
+        "quiet": False,
+        "nocheckcertificate": True,
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "web"]
+            }
+        },
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
     }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        base_filename = os.path.splitext(ydl.prepare_filename(info))[0]
-        filename = f"{base_filename}.wav"
+        video_id = info.get("id")
+        filename = os.path.join(DOWNLOAD_DIR, f"{video_id}.wav")
+        if not os.path.exists(filename):
+            base_filename = os.path.splitext(ydl.prepare_filename(info))[0]
+            filename = f"{base_filename}.wav"
     return filename
 
 
