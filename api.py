@@ -195,11 +195,21 @@ def health() -> dict[str, str]:
 @app.post("/v1/meetings/analyze")
 def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> dict[str, Any]:
     purge_sessions()
-    chunks = process_input(str(request.sourceUrl))
-    transcript = transcribe_chunks(chunks)
-    if not transcript:
-        raise HTTPException(status_code=422, detail="No speech was detected in the source")
-    analysis = analyze_transcript(transcript)
+    try:
+        chunks = process_input(str(request.sourceUrl))
+        transcript = transcribe_chunks(chunks)
+        if not transcript:
+            raise HTTPException(status_code=422, detail="No speech was detected in the source")
+        analysis = analyze_transcript(transcript)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[analysis] source processing failed: {type(exc).__name__}")
+        raise HTTPException(
+            status_code=502,
+            detail="The source could not be downloaded or processed. Check the URL and try again.",
+        ) from exc
+
     meeting_id = uuid4().hex
     _sessions[meeting_id] = {"created_at": time.time(), "transcript": transcript}
     return {"meetingId": meeting_id, "transcript": transcript, **analysis}
