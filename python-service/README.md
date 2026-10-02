@@ -1,8 +1,6 @@
 # Python analysis service
 
-This adapter reuses the existing GitHub modules for YouTube ingestion, Whisper/Sarvam transcription, Mistral summaries and extraction, Chroma retrieval, and meeting Q&A.
-
-Copy `api.py` into the root of the GitHub repository. Install `requirements-api.txt` in addition to the repository's existing `Requirments.txt` dependencies. The runtime must also provide FFmpeg and enough memory for the configured Whisper model and HuggingFace embedding model.
+This adapter is the low-memory HTTP wrapper used by the hosted Signal Room app. It avoids importing Whisper, Torch, LangChain, ChromaDB, and sentence-transformers at startup. Audio is processed with yt-dlp/FFmpeg, transcription is delegated to Sarvam, and meeting analysis/Q&A are delegated to Mistral through server-side environment variables.
 
 Start the service with:
 
@@ -14,19 +12,18 @@ Required environment variables:
 
 | Variable | Purpose |
 |---|---|
-| `MISTRAL_API_KEY` | Mistral LLM calls for title, summary, extraction, and RAG answers |
-| `WHISPER_MODEL` | Optional Whisper model name; defaults to `small` |
-| `SARVAM_API_KEY` | Required only when `language=hinglish` |
-| `SERVICE_API_KEY` | Optional shared secret for calls from the hosted Node server |
+| `MISTRAL_API_KEY` | Mistral analysis and Q&A |
+| `SARVAM_API_KEY` | Speech-to-text transcription |
+| `SERVICE_API_KEY` | Optional shared secret for the hosted Node server |
 | `FRONTEND_ORIGIN` | Hosted site origin allowed by CORS |
-| `SESSION_TTL_SECONDS` | Optional in-memory RAG session lifetime; defaults to 3600 |
+| `SESSION_TTL_SECONDS` | Optional in-memory context lifetime; defaults to 3600 |
 
-The hosted web project expects these routes:
+Routes:
 
 - `GET /health`
 - `POST /v1/meetings/analyze` with `{ "sourceUrl": "https://...", "language": "english" }`
-- `POST /v1/meetings/{meetingId}/ask` with `{ "question": "...", "transcript": "..." }`. The transcript is used only when the in-memory RAG session expired, allowing the Node server's durable meeting record to rebuild context.
+- `POST /v1/meetings/{meetingId}/ask` with `{ "question": "...", "transcript": "..." }`
 
-The adapter intentionally keeps the RAG chain server-side and returns only JSON. The RAG session remains an in-memory performance cache, while the hosted Node server persists the transcript and can rehydrate it after the cache TTL.
+The `transcript` field is used only when the in-memory session has expired. The hosted Node server persists the transcript and sends it back to rebuild lightweight retrieval context, so Q&A remains available after the service TTL.
 
-The existing repository's `.env` was public in the repository audit. Revoke and regenerate any real credentials before deploying.
+Never commit `.env` or provider keys. The Render source repository is `ankursingh121/ai-video-metting-assistant`; the corrected lightweight adapter is on commit `9ca0916`.

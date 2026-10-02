@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import tempfile
 import time
 from typing import Any
 from uuid import uuid4
@@ -24,7 +25,7 @@ from pydantic import BaseModel, Field, HttpUrl
 
 load_dotenv()
 
-from utils.audio_processor import process_input  # noqa: E402
+from utils.audio_processor import chunk_audio, convert_to_wav, process_input  # noqa: E402
 
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
 SARVAM_URL = "https://api.sarvam.ai/speech-to-text-translate"
@@ -49,6 +50,7 @@ _sessions: dict[str, dict[str, Any]] = {}
 
 class AnalyzeRequest(BaseModel):
     sourceUrl: HttpUrl
+    sourceType: str = Field(default="youtube", pattern="^(youtube|video|audio)$")
     language: str = Field(default="english", pattern="^(english|hinglish)$")
 
 
@@ -188,6 +190,27 @@ def relevant_context(transcript: str, question: str) -> str:
     return "\n".join(selected)[:12000] or transcript[:12000]
 
 
+def process_uploaded_url(source: str, source_type: str) -> list[str]:
+    """Download a signed storage URL and convert it with FFmpeg/pydub."""
+    response = requests.get(source, stream=True, timeout=120)
+    response.raise_for_status()
+    suffix = ".mp4" if source_type == "video" else ".mp3"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
+        path = source_file.name
+        total = 0
+        for part in response.iter_content(chunk_size=1024 * 1024):
+            total += len(part)
+            if total > 45 * 1024 * 1024:
+                raise RuntimeError("Uploaded source exceeds the 45 MB limit")
+            source_file.write(part)
+    try:
+        wav_path = convert_to_wav(path)
+        return chunk_audio(wav_path)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "remote-lightweight"}
@@ -197,7 +220,7 @@ def health() -> dict[str, str]:
 def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> dict[str, Any]:
     purge_sessions()
     try:
-        chunks = process_input(str(request.sourceUrl))
+        chunks = process_input(str(request.sourceUrl)) if request.sourceType == "youtube" else process_uploaded_url(str(request.sourceUrl), request.sourceType)
         transcript = transcribe_chunks(chunks)
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech was detected in the source")
@@ -206,9 +229,12 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
         raise
     except Exception as exc:
         print(f"[analysis] source processing failed: {type(exc).__name__}")
+        detail = "The source could not be downloaded or processed. Check the URL and try again."
+        if request.sourceType == "youtube":
+            detail = "YouTube could not be downloaded. Confirm the video is public, not age-restricted, and use a direct youtube.com/watch or youtu.be link."
         raise HTTPException(
             status_code=502,
-            detail="The source could not be downloaded or processed. Check the URL and try again.",
+            detail=detail,
         ) from exc
 
     meeting_id = uuid4().hex
