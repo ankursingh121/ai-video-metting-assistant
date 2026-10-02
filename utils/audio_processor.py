@@ -18,12 +18,11 @@ def download_youtube_audio(url :str) ->str:
             }
         ],
         "quiet": False,
+        "js_runtimes": {"deno": {}},
+        "retries": 3,
+        "fragment_retries": 3,
+        "extractor_retries": 3,
         "nocheckcertificate": True,
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "ios", "web"]
-            }
-        },
         "http_headers": {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }

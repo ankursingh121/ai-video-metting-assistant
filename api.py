@@ -229,7 +229,7 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
         raise
     except Exception as exc:
         print(f"[analysis] source processing failed: {type(exc).__name__}")
-        detail = "The source could not be downloaded or processed. Check the URL and try again."
+        detail = "Uploaded media could not be downloaded or converted. Please retry the upload and ensure it is a supported audio/video file under 45 MB."
         if request.sourceType == "youtube":
             detail = "YouTube could not be downloaded. Confirm the video is public, not age-restricted, and use a direct youtube.com/watch or youtu.be link."
         raise HTTPException(
