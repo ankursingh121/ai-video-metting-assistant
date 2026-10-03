@@ -5,3 +5,4 @@ pydantic>=2.8,<3
 requests>=2.32,<3
 pydub>=0.25,<1
 yt-dlp[default]>=2025.1,<2027
+youtube-transcript-api>=1.2,<2

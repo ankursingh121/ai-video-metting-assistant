@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from yt_dlp.utils import DownloadError
+from youtube_transcript_api import YouTubeTranscriptApi
 
 load_dotenv()
 
@@ -212,6 +213,19 @@ def process_uploaded_url(source: str, source_type: str) -> list[str]:
             os.remove(path)
 
 
+def youtube_video_id(source: str) -> str:
+    match = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{6,})", source)
+    if not match:
+        raise ValueError("Could not extract a YouTube video id from the URL")
+    return match.group(1)
+
+
+def fetch_youtube_captions(source: str, language: str) -> str:
+    languages = ["hi", "en"] if language == "hinglish" else ["en", "hi"]
+    fetched = YouTubeTranscriptApi().fetch(youtube_video_id(source), languages=languages)
+    return " ".join(snippet.text for snippet in fetched).strip()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "4d540d8", "youtubeRuntime": "deno-ejs"}
@@ -220,9 +234,23 @@ def health() -> dict[str, str]:
 @app.post("/v1/meetings/analyze")
 def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> dict[str, Any]:
     purge_sessions()
+    captions_fallback_failed = False
     try:
-        chunks = process_input(str(request.sourceUrl)) if request.sourceType == "youtube" else process_uploaded_url(str(request.sourceUrl), request.sourceType)
-        transcript = transcribe_chunks(chunks)
+        transcript = ""
+        if request.sourceType == "youtube":
+            try:
+                chunks = process_input(str(request.sourceUrl))
+                transcript = transcribe_chunks(chunks)
+            except DownloadError:
+                print("[analysis] yt-dlp blocked; trying YouTube captions fallback")
+                try:
+                    transcript = fetch_youtube_captions(str(request.sourceUrl), request.language)
+                except Exception:
+                    captions_fallback_failed = True
+                    raise
+        else:
+            chunks = process_uploaded_url(str(request.sourceUrl), request.sourceType)
+            transcript = transcribe_chunks(chunks)
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech was detected in the source")
         analysis = analyze_transcript(transcript)
@@ -232,6 +260,9 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
         print(f"[analysis] source processing failed: {type(exc).__name__}")
         detail = "Uploaded media could not be downloaded or converted. Please retry the upload and ensure it is a supported audio/video file under 45 MB."
         if request.sourceType == "youtube":
+            if captions_fallback_failed:
+                detail = "YouTube blocked both audio and captions from this server. Upload the video file, or configure a rotating proxy/API for YouTube access."
+                raise HTTPException(status_code=502, detail=detail) from exc
             detail = "YouTube could not be downloaded. Confirm the video is public, not age-restricted, and use a direct youtube.com/watch or youtu.be link."
             if isinstance(exc, DownloadError):
                 reason = str(exc).lower()
@@ -244,7 +275,7 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
                 elif "unavailable" in reason or "removed" in reason or "not found" in reason:
                     detail = "This YouTube video is unavailable, removed, or blocked in the server region. Try another public video."
                 else:
-                    detail = "YouTube could not provide a downloadable audio stream for this link. Try a direct watch link or upload the file instead."
+                    detail = "YouTube audio is blocked on this server and captions were not available. Upload the video file instead or use a video with public captions."
         raise HTTPException(
             status_code=502,
             detail=detail,
