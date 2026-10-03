@@ -214,7 +214,7 @@ def process_uploaded_url(source: str, source_type: str) -> list[str]:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "9b2ee7d", "youtubeRuntime": "deno-ejs"}
+    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "4d540d8", "youtubeRuntime": "deno-ejs"}
 
 
 @app.post("/v1/meetings/analyze")
