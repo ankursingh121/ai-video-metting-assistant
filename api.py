@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
+from yt_dlp.utils import DownloadError
 
 load_dotenv()
 
@@ -232,6 +233,18 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
         detail = "Uploaded media could not be downloaded or converted. Please retry the upload and ensure it is a supported audio/video file under 45 MB."
         if request.sourceType == "youtube":
             detail = "YouTube could not be downloaded. Confirm the video is public, not age-restricted, and use a direct youtube.com/watch or youtu.be link."
+            if isinstance(exc, DownloadError):
+                reason = str(exc).lower()
+                if "sign in" in reason or "not a bot" in reason or "bot" in reason:
+                    detail = "YouTube blocked this server request as automated traffic. Try a different public video or upload the video file instead."
+                elif "private" in reason or "members-only" in reason or "login required" in reason:
+                    detail = "This YouTube video is private, members-only, or requires login. Use a public video or upload the file instead."
+                elif "age" in reason or "confirm your age" in reason:
+                    detail = "This YouTube video is age-restricted. Use a non-age-restricted video or upload the file instead."
+                elif "unavailable" in reason or "removed" in reason or "not found" in reason:
+                    detail = "This YouTube video is unavailable, removed, or blocked in the server region. Try another public video."
+                else:
+                    detail = "YouTube could not provide a downloadable audio stream for this link. Try a direct watch link or upload the file instead."
         raise HTTPException(
             status_code=502,
             detail=detail,
