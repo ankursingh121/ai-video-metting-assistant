@@ -243,7 +243,7 @@ def fetch_youtube_captions(source: str, language: str) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "e041a49", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled"}
+    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "c27812f", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled", "multipartUpload": "enabled"}
 
 
 @app.post("/v1/meetings/analyze")
