@@ -19,7 +19,7 @@ from uuid import uuid4
 
 import requests
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, HttpUrl
 from yt_dlp.utils import DownloadError
@@ -213,6 +213,21 @@ def process_uploaded_url(source: str, source_type: str) -> list[str]:
             os.remove(path)
 
 
+def process_uploaded_bytes(data: bytes, source_type: str, filename: str) -> list[str]:
+    suffix = ".mp4" if source_type == "video" else ".mp3"
+    if "." in filename:
+        suffix = "." + filename.rsplit(".", 1)[-1].lower()[:8]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
+        path = source_file.name
+        source_file.write(data)
+    try:
+        wav_path = convert_to_wav(path)
+        return chunk_audio(wav_path)
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 def youtube_video_id(source: str) -> str:
     match = re.search(r"(?:v=|youtu\.be/|shorts/|embed/)([A-Za-z0-9_-]{6,})", source)
     if not match:
@@ -281,6 +296,34 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
             detail=detail,
         ) from exc
 
+    meeting_id = uuid4().hex
+    _sessions[meeting_id] = {"created_at": time.time(), "transcript": transcript}
+    return {"meetingId": meeting_id, "transcript": transcript, **analysis}
+
+
+@app.post("/v1/meetings/analyze-upload")
+async def analyze_upload(
+    file: UploadFile = File(...),
+    sourceType: str = Form(...),
+    language: str = Form("english"),
+    _: None = Depends(require_service_key),
+) -> dict[str, Any]:
+    if sourceType not in {"video", "audio"}:
+        raise HTTPException(status_code=400, detail="sourceType must be video or audio")
+    data = await file.read()
+    if not data or len(data) > 45 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Uploaded media must be smaller than 45 MB")
+    try:
+        chunks = process_uploaded_bytes(data, sourceType, file.filename or "meeting-source")
+        transcript = transcribe_chunks(chunks)
+        if not transcript:
+            raise HTTPException(status_code=422, detail="No speech was detected in the uploaded media")
+        analysis = analyze_transcript(transcript)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"[analysis-upload] processing failed: {type(exc).__name__}")
+        raise HTTPException(status_code=502, detail="Uploaded media could not be converted or transcribed. Check the file format and try again.") from exc
     meeting_id = uuid4().hex
     _sessions[meeting_id] = {"created_at": time.time(), "transcript": transcript}
     return {"meetingId": meeting_id, "transcript": transcript, **analysis}
