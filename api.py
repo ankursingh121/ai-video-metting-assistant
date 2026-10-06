@@ -12,6 +12,7 @@ import json
 import os
 import re
 import secrets
+import subprocess
 import tempfile
 import time
 from typing import Any
@@ -220,12 +221,20 @@ def process_uploaded_bytes(data: bytes, source_type: str, filename: str) -> list
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as source_file:
         path = source_file.name
         source_file.write(data)
+    wav_path = f"{path}.wav"
     try:
-        wav_path = convert_to_wav(path)
-        return chunk_audio(wav_path)
+        command = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", path, "-vn", "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", wav_path]
+        converted = subprocess.run(command, capture_output=True, text=True, timeout=180)
+        if converted.returncode != 0 or not os.path.exists(wav_path):
+            reason = (converted.stderr or "no audio stream was found").strip().splitlines()[-1][:240]
+            raise RuntimeError(f"FFmpeg could not read this media file: {reason}")
+        chunks = chunk_audio(wav_path)
+        return chunks
     finally:
         if os.path.exists(path):
             os.remove(path)
+        if os.path.exists(wav_path):
+            os.remove(wav_path)
 
 
 def youtube_video_id(source: str) -> str:
@@ -315,15 +324,23 @@ async def analyze_upload(
         raise HTTPException(status_code=413, detail="Uploaded media must be smaller than 45 MB")
     try:
         chunks = process_uploaded_bytes(data, sourceType, file.filename or "meeting-source")
+    except Exception as exc:
+        print(f"[analysis-upload] conversion failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=422, detail="Video conversion failed. Ensure the file contains an audio track and is a playable MP4, MOV, WebM, or MP3 file.") from exc
+    try:
         transcript = transcribe_chunks(chunks)
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech was detected in the uploaded media")
-        analysis = analyze_transcript(transcript)
     except HTTPException:
         raise
     except Exception as exc:
-        print(f"[analysis-upload] processing failed: {type(exc).__name__}")
-        raise HTTPException(status_code=502, detail="Uploaded media could not be converted or transcribed. Check the file format and try again.") from exc
+        print(f"[analysis-upload] transcription failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail="Video converted successfully, but transcription failed. Check the Sarvam service configuration or try a shorter file.") from exc
+    try:
+        analysis = analyze_transcript(transcript)
+    except Exception as exc:
+        print(f"[analysis-upload] analysis failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=502, detail="Transcription completed, but meeting analysis failed. Please retry this file.") from exc
     meeting_id = uuid4().hex
     _sessions[meeting_id] = {"created_at": time.time(), "transcript": transcript}
     return {"meetingId": meeting_id, "transcript": transcript, **analysis}
