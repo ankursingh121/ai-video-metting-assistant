@@ -54,7 +54,7 @@ _sessions: dict[str, dict[str, Any]] = {}
 class AnalyzeRequest(BaseModel):
     sourceUrl: HttpUrl
     sourceType: str = Field(default="youtube", pattern="^(youtube|video|audio)$")
-    language: str = Field(default="english", pattern="^(english|hinglish)$")
+    language: str = Field(default="english", pattern="^(english|hindi|hinglish)$")
 
 
 class AskRequest(BaseModel):
@@ -85,23 +85,20 @@ def _require_env(name: str) -> str:
 
 def _mistral(system_prompt: str, user_prompt: str, temperature: float = 0.2) -> str:
     key = _require_env("MISTRAL_API_KEY")
-    response = requests.post(
-        MISTRAL_URL,
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-        json={
-            "model": MISTRAL_MODEL,
-            "temperature": temperature,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        },
-        timeout=180,
-    )
-    if not response.ok:
-        raise RuntimeError(f"Mistral request failed ({response.status_code})")
-    body = response.json()
-    return body["choices"][0]["message"]["content"].strip()
+    payload = {"model": MISTRAL_MODEL, "temperature": temperature, "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]}
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.post(MISTRAL_URL, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json=payload, timeout=180)
+            if not response.ok:
+                raise RuntimeError(f"Mistral request failed ({response.status_code})")
+            body = response.json()
+            return body["choices"][0]["message"]["content"].strip()
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"Mistral request failed after retries: {last_error}") from last_error
 
 
 def _sarvam_piece(piece_path: str) -> str:
@@ -160,22 +157,26 @@ def _parse_json(text: str) -> dict[str, Any]:
 
 
 def analyze_transcript(transcript: str) -> dict[str, str]:
-    bounded = transcript[:24000]
-    analysis_text = _mistral(
-        "You are a precise meeting analyst. Return valid JSON only.",
-        """Analyze this meeting transcript. Return one JSON object with exactly these string keys:
+    bounded = transcript[:14000]
+    try:
+        analysis_text = _mistral(
+            "You are a precise meeting analyst. Return valid JSON only.",
+            """Analyze this meeting transcript. Return one JSON object with exactly these string keys:
 summary, action_items, key_decisions, open_questions.
 Use concise numbered or bulleted text inside each string. Include owners/deadlines when present. If a category is absent, write a short statement saying none were found.
 
 TRANSCRIPT:
 """ + bounded,
-    )
+        )
+    except Exception as exc:
+        print(f"[analysis] summary generation failed, returning transcript-safe fallback: {type(exc).__name__}")
+        return {"title": "Meeting transcript", "summary": "Transcript is ready. AI summary is temporarily unavailable; please retry analysis to generate structured insights.", "action_items": "AI action-item extraction is temporarily unavailable.", "key_decisions": "AI decision extraction is temporarily unavailable.", "open_questions": "AI question extraction is temporarily unavailable."}
     data = _parse_json(analysis_text)
-    title = _mistral(
-        "You create concise professional meeting titles. Return only the title, no punctuation or explanation.",
-        "Create a title of at most 8 words for this meeting:\n" + bounded[:5000],
-        temperature=0.1,
-    )
+    try:
+        title = _mistral("You create concise professional meeting titles. Return only the title, no punctuation or explanation.", "Create a title of at most 8 words for this meeting:\n" + bounded[:3500], temperature=0.1)
+    except Exception as exc:
+        print(f"[analysis] title generation failed, using fallback: {type(exc).__name__}")
+        title = "Meeting analysis"
     return {
         "title": title[:120] or "Untitled meeting",
         "summary": str(data.get("summary") or "No summary returned."),
@@ -245,7 +246,7 @@ def youtube_video_id(source: str) -> str:
 
 
 def fetch_youtube_captions(source: str, language: str) -> str:
-    languages = ["hi", "en"] if language == "hinglish" else ["en", "hi"]
+    languages = ["hi", "en"] if language in {"hindi", "hinglish"} else ["en", "hi"]
     fetched = YouTubeTranscriptApi().fetch(youtube_video_id(source), languages=languages)
     return " ".join(snippet.text for snippet in fetched).strip()
 
