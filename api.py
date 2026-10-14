@@ -63,6 +63,11 @@ class AskRequest(BaseModel):
     language: str = Field(default="english", pattern="^(english|hindi|hinglish)$")
 
 
+class RelocalizeRequest(BaseModel):
+    transcript: str = Field(min_length=1, max_length=2_000_000)
+    language: str = Field(default="english", pattern="^(english|hindi|hinglish)$")
+
+
 def require_service_key(x_service_key: str | None = Header(default=None)) -> None:
     if SERVICE_KEY and not x_service_key:
         raise HTTPException(status_code=401, detail="Missing service key")
@@ -267,7 +272,7 @@ def fetch_youtube_captions(source: str, language: str) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "7e913ac", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled", "multipartUpload": "enabled", "ffmpegDiagnostics": "enabled", "languages": "english-hindi", "localizedInsights": "enabled", "localizedTranscript": "enabled"}
+    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "4d1dce7", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled", "multipartUpload": "enabled", "ffmpegDiagnostics": "enabled", "languages": "english-hindi"}
 
 
 @app.post("/v1/meetings/analyze")
@@ -386,3 +391,9 @@ def ask(meeting_id: str, request: AskRequest, _: None = Depends(require_service_
         temperature=0.2,
     )
     return {"answer": answer}
+
+
+@app.post("/v1/meetings/relocalize")
+def relocalize(request: RelocalizeRequest, _: None = Depends(require_service_key)) -> dict[str, str]:
+    localized = localize_transcript(request.transcript, request.language)
+    return {"transcript": localized, **analyze_transcript(localized, request.language)}
