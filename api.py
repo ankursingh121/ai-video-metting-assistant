@@ -60,6 +60,7 @@ class AnalyzeRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     transcript: str | None = Field(default=None, max_length=2_000_000)
+    language: str = Field(default="english", pattern="^(english|hindi|hinglish)$")
 
 
 def require_service_key(x_service_key: str | None = Header(default=None)) -> None:
@@ -156,11 +157,12 @@ def _parse_json(text: str) -> dict[str, Any]:
         return {}
 
 
-def analyze_transcript(transcript: str) -> dict[str, str]:
+def analyze_transcript(transcript: str, language: str = "english") -> dict[str, str]:
     bounded = transcript[:14000]
+    output_language = "Hindi in Devanagari script" if language in {"hindi", "hinglish"} else "English"
     try:
         analysis_text = _mistral(
-            "You are a precise meeting analyst. Return valid JSON only.",
+            f"You are a precise meeting analyst. Return valid JSON only. Write every value in {output_language}. Keep these JSON keys exactly in English: summary, action_items, key_decisions, open_questions.",
             """Analyze this meeting transcript. Return one JSON object with exactly these string keys:
 summary, action_items, key_decisions, open_questions.
 Use concise numbered or bulleted text inside each string. Include owners/deadlines when present. If a category is absent, write a short statement saying none were found.
@@ -170,10 +172,12 @@ TRANSCRIPT:
         )
     except Exception as exc:
         print(f"[analysis] summary generation failed, returning transcript-safe fallback: {type(exc).__name__}")
+        if language in {"hindi", "hinglish"}:
+            return {"title": "मीटिंग ट्रांसक्रिप्ट", "summary": "ट्रांसक्रिप्ट तैयार है। AI सारांश अभी उपलब्ध नहीं है; structured insights के लिए दोबारा प्रयास करें।", "action_items": "AI action items अभी उपलब्ध नहीं हैं।", "key_decisions": "AI decisions अभी उपलब्ध नहीं हैं।", "open_questions": "AI open questions अभी उपलब्ध नहीं हैं।"}
         return {"title": "Meeting transcript", "summary": "Transcript is ready. AI summary is temporarily unavailable; please retry analysis to generate structured insights.", "action_items": "AI action-item extraction is temporarily unavailable.", "key_decisions": "AI decision extraction is temporarily unavailable.", "open_questions": "AI question extraction is temporarily unavailable."}
     data = _parse_json(analysis_text)
     try:
-        title = _mistral("You create concise professional meeting titles. Return only the title, no punctuation or explanation.", "Create a title of at most 8 words for this meeting:\n" + bounded[:3500], temperature=0.1)
+        title = _mistral(f"You create concise professional meeting titles in {output_language}. Return only the title, no punctuation or explanation.", "Create a title of at most 8 words for this meeting:\n" + bounded[:3500], temperature=0.1)
     except Exception as exc:
         print(f"[analysis] title generation failed, using fallback: {type(exc).__name__}")
         title = "Meeting analysis"
@@ -278,7 +282,7 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
             transcript = transcribe_chunks(chunks)
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech was detected in the source")
-        analysis = analyze_transcript(transcript)
+        analysis = analyze_transcript(transcript, request.language)
     except HTTPException:
         raise
     except Exception as exc:
@@ -338,7 +342,7 @@ async def analyze_upload(
         print(f"[analysis-upload] transcription failed: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=502, detail="Video converted successfully, but transcription failed. Check the Sarvam service configuration or try a shorter file.") from exc
     try:
-        analysis = analyze_transcript(transcript)
+        analysis = analyze_transcript(transcript, language)
     except Exception as exc:
         print(f"[analysis-upload] analysis failed: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=502, detail="Transcription completed, but meeting analysis failed. Please retry this file.") from exc
@@ -357,8 +361,9 @@ def ask(meeting_id: str, request: AskRequest, _: None = Depends(require_service_
         session = {"created_at": time.time(), "transcript": request.transcript}
         _sessions[meeting_id] = session
     context = relevant_context(session["transcript"], request.question)
+    output_language = "Hindi in Devanagari script" if request.language in {"hindi", "hinglish"} else "English"
     answer = _mistral(
-        "You are a meeting assistant. Answer only from the supplied transcript context. If the answer is absent, say: I could not find this information in the meeting transcript. Be concise.",
+        f"You are a meeting assistant. Answer only from the supplied transcript context. Respond in {output_language}. If the answer is absent, say the equivalent of 'I could not find this information in the meeting transcript.' Be concise.",
         f"CONTEXT:\n{context}\n\nQUESTION:\n{request.question}",
         temperature=0.2,
     )
