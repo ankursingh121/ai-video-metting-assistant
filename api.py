@@ -31,9 +31,9 @@ load_dotenv()
 from utils.audio_processor import chunk_audio, convert_to_wav, process_input  # noqa: E402
 
 MISTRAL_URL = "https://api.mistral.ai/v1/chat/completions"
-SARVAM_URL = "https://api.sarvam.ai/speech-to-text-translate"
+SARVAM_URL = "https://api.sarvam.ai/speech-to-text"
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
-SARVAM_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v2.5")
+SARVAM_MODEL = os.getenv("SARVAM_STT_MODEL", "saaras:v4")
 SERVICE_KEY = os.getenv("SERVICE_API_KEY")
 SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "3600"))
 
@@ -109,7 +109,7 @@ def _sarvam_piece(piece_path: str) -> str:
             SARVAM_URL,
             headers={"api-subscription-key": key},
             files={"file": (os.path.basename(piece_path), audio_file, "audio/wav")},
-            data={"model": SARVAM_MODEL, "with_diarization": "false"},
+            data={"model": SARVAM_MODEL, "mode": "transcribe", "language_code": "unknown", "with_timestamps": "false"},
             timeout=180,
         )
     if not response.ok:
@@ -139,6 +139,16 @@ def transcribe_chunks(chunks: list[str]) -> str:
         if os.path.exists(chunk_path):
             os.remove(chunk_path)
     return " ".join(transcript_parts).strip()
+
+
+def localize_transcript(transcript: str, language: str) -> str:
+    """Return the complete transcript in the user's selected output language."""
+    target = "Hindi in Devanagari script" if language in {"hindi", "hinglish"} else "English"
+    return _mistral(
+        f"You are a professional transcript translator. Convert the transcript to {target}. If it is already in that language, preserve it. Return only the converted transcript, with no explanation, headings, or quotation marks. Preserve names, numbers, decisions, and meaning.",
+        transcript[:24000],
+        temperature=0.1,
+    )
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -257,7 +267,7 @@ def fetch_youtube_captions(source: str, language: str) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "4cf2d3a", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled", "multipartUpload": "enabled", "ffmpegDiagnostics": "enabled", "languages": "english-hindi", "localizedInsights": "enabled"}
+    return {"status": "ok", "mode": "remote-lightweight", "adapterVersion": "4d1dce7", "youtubeRuntime": "deno-ejs", "captionsFallback": "enabled", "multipartUpload": "enabled", "ffmpegDiagnostics": "enabled", "languages": "english-hindi"}
 
 
 @app.post("/v1/meetings/analyze")
@@ -282,6 +292,10 @@ def analyze(request: AnalyzeRequest, _: None = Depends(require_service_key)) -> 
             transcript = transcribe_chunks(chunks)
         if not transcript:
             raise HTTPException(status_code=422, detail="No speech was detected in the source")
+        try:
+            transcript = localize_transcript(transcript, request.language)
+        except Exception as exc:
+            print(f"[analysis] transcript localization failed; using raw transcript: {type(exc).__name__}")
         analysis = analyze_transcript(transcript, request.language)
     except HTTPException:
         raise
@@ -342,6 +356,10 @@ async def analyze_upload(
         print(f"[analysis-upload] transcription failed: {type(exc).__name__}: {exc}")
         raise HTTPException(status_code=502, detail="Video converted successfully, but transcription failed. Check the Sarvam service configuration or try a shorter file.") from exc
     try:
+        try:
+            transcript = localize_transcript(transcript, language)
+        except Exception as exc:
+            print(f"[analysis-upload] transcript localization failed; using raw transcript: {type(exc).__name__}")
         analysis = analyze_transcript(transcript, language)
     except Exception as exc:
         print(f"[analysis-upload] analysis failed: {type(exc).__name__}: {exc}")
